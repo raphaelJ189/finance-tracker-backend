@@ -1,0 +1,156 @@
+package com.financetracker.config;
+
+import com.financetracker.security.JwtAuthenticationFilter;
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.util.List;
+
+@Configuration
+@EnableWebSecurity
+@EnableMethodSecurity(prePostEnabled = true)
+public class SecurityConfig {
+
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final AppProperties appProperties;
+
+    public SecurityConfig(@Lazy JwtAuthenticationFilter jwtAuthenticationFilter,
+                          AppProperties appProperties) {
+        this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+        this.appProperties = appProperties;
+    }
+
+    @Bean
+    public SecurityFilterChain securityFilterChain(HttpSecurity http)
+            throws Exception {
+
+        http
+                // Apply CORS configuration
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+
+                // Disable CSRF
+                .csrf(AbstractHttpConfigurer::disable)
+
+                // Stateless session
+                .sessionManagement(session -> session
+                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+                )
+
+                // Exception handling — controls what happens on auth failures
+                .exceptionHandling(exceptions -> exceptions
+
+                        // Fires when request has no token or invalid token
+                        // example. the user is not authenticated at all
+                        .authenticationEntryPoint((request, response, authException) -> {
+                            response.setContentType("application/json");
+                            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                            response.getWriter().write("""
+                                {
+                                    "error": "Unauthorized",
+                                    "message": "Authentication required. Please login."
+                                }
+                                """);
+                        })
+
+                        // Fires when user IS authenticated but lacks permission
+                        // e.g. USER role trying to access ADMIN endpoint
+                        .accessDeniedHandler((request, response, accessDeniedException) -> {
+                            response.setContentType("application/json");
+                            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                            response.getWriter().write("""
+                                {
+                                    "error": "Forbidden",
+                                    "message": "You do not have permission to access this resource."
+                                }
+                                """);
+                        })
+                )
+
+                // URL authorization rules
+                .authorizeHttpRequests(auth -> auth
+
+                        // Public endpoints
+                        .requestMatchers(
+                                "/api/v1/auth/register",
+                                "/api/v1/auth/login"
+                        ).permitAll()
+
+                        // Actuator health
+                        .requestMatchers("/actuator/health").permitAll()
+
+                        // Admin-only endpoints
+                        .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
+
+                        // Everything else requires authentication
+                        .anyRequest().authenticated()
+                )
+
+                // Add JWT filter before Spring's default auth filter
+                .addFilterBefore(
+                        jwtAuthenticationFilter,
+                        UsernamePasswordAuthenticationFilter.class
+                );
+
+        return http.build();
+    }
+
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+
+        CorsConfiguration configuration = new CorsConfiguration();
+
+        configuration.setAllowedOrigins(
+                appProperties.getCors().getAllowedOrigins()
+        );
+
+        configuration.setAllowedMethods(List.of(
+                "GET", "POST", "PUT",
+                "PATCH", "DELETE", "OPTIONS"
+        ));
+
+        configuration.setAllowedHeaders(List.of(
+                "Authorization",
+                "Content-Type",
+                "Accept",
+                "Origin",
+                "X-Requested-With"
+        ));
+
+        configuration.setExposedHeaders(List.of("Authorization"));
+        configuration.setAllowCredentials(true);
+        configuration.setMaxAge(3600L);
+
+        UrlBasedCorsConfigurationSource source =
+                new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", configuration);
+
+        return source;
+    }
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
+    @Bean
+    public AuthenticationManager authenticationManager(
+            AuthenticationConfiguration config) throws Exception {
+        return config.getAuthenticationManager();
+    }
+}
