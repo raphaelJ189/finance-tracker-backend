@@ -1,0 +1,15 @@
+target/
+.git/
+.gitignore
+.gitattributes
+.idea/
+*.iml
+.mvn/wrapper/maven-wrapper.jar
+src/test/
+*.md
+.env
+.env.*
+application-dev.yml
+application-local.yml
+logs/
+*.log
